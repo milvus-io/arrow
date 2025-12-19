@@ -189,7 +189,8 @@ func importSchema(schema *CArrowSchema) (ret arrow.Field, err error) {
 			ret.Type = &arrow.DictionaryType{
 				IndexType: ret.Type,
 				ValueType: valueField.Type,
-				Ordered:   schema.dictionary.flags&C.ARROW_FLAG_DICTIONARY_ORDERED != 0}
+				Ordered:   schema.dictionary.flags&C.ARROW_FLAG_DICTIONARY_ORDERED != 0,
+			}
 		}
 
 		return
@@ -395,7 +396,9 @@ func (imp *cimporter) doImportChildren() error {
 		st := imp.dt.(*arrow.StructType)
 		for i, c := range children {
 			imp.children[i].dt = st.Field(i).Type
-			imp.children[i].importChild(imp, c)
+			if err := imp.children[i].importChild(imp, c); err != nil {
+				return err
+			}
 		}
 	case arrow.RUN_END_ENCODED: // import run-ends and values
 		st := imp.dt.(*arrow.RunEndEncodedType)
@@ -416,13 +419,17 @@ func (imp *cimporter) doImportChildren() error {
 		dt := imp.dt.(*arrow.DenseUnionType)
 		for i, c := range children {
 			imp.children[i].dt = dt.Fields()[i].Type
-			imp.children[i].importChild(imp, c)
+			if err := imp.children[i].importChild(imp, c); err != nil {
+				return err
+			}
 		}
 	case arrow.SPARSE_UNION:
 		dt := imp.dt.(*arrow.SparseUnionType)
 		for i, c := range children {
 			imp.children[i].dt = dt.Fields()[i].Type
-			imp.children[i].importChild(imp, c)
+			if err := imp.children[i].importChild(imp, c); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -652,9 +659,7 @@ func (imp *cimporter) importStringLike(offsetByteWidth int64) (err error) {
 		return
 	}
 
-	var (
-		nulls, offsets, values *memory.Buffer
-	)
+	var nulls, offsets, values *memory.Buffer
 	if nulls, err = imp.importNullBitmap(0); err != nil {
 		return
 	}
