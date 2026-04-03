@@ -189,7 +189,8 @@ func importSchema(schema *CArrowSchema) (ret arrow.Field, err error) {
 			ret.Type = &arrow.DictionaryType{
 				IndexType: ret.Type,
 				ValueType: valueField.Type,
-				Ordered:   schema.dictionary.flags&C.ARROW_FLAG_DICTIONARY_ORDERED != 0}
+				Ordered:   schema.dictionary.flags&C.ARROW_FLAG_DICTIONARY_ORDERED != 0,
+			}
 		}
 
 		return
@@ -395,7 +396,9 @@ func (imp *cimporter) doImportChildren() error {
 		st := imp.dt.(*arrow.StructType)
 		for i, c := range children {
 			imp.children[i].dt = st.Field(i).Type
-			imp.children[i].importChild(imp, c)
+			if err := imp.children[i].importChild(imp, c); err != nil {
+				return err
+			}
 		}
 	case arrow.RUN_END_ENCODED: // import run-ends and values
 		st := imp.dt.(*arrow.RunEndEncodedType)
@@ -416,13 +419,17 @@ func (imp *cimporter) doImportChildren() error {
 		dt := imp.dt.(*arrow.DenseUnionType)
 		for i, c := range children {
 			imp.children[i].dt = dt.Fields()[i].Type
-			imp.children[i].importChild(imp, c)
+			if err := imp.children[i].importChild(imp, c); err != nil {
+				return err
+			}
 		}
 	case arrow.SPARSE_UNION:
 		dt := imp.dt.(*arrow.SparseUnionType)
 		for i, c := range children {
 			imp.children[i].dt = dt.Fields()[i].Type
-			imp.children[i].importChild(imp, c)
+			if err := imp.children[i].importChild(imp, c); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -449,33 +456,28 @@ func (imp *cimporter) doImportArr(src *CArrowArray) error {
 	// and only null columns, then we can release the CArrowArray
 	// struct immediately after import, since we have no imported
 	// memory that we have to track the lifetime of.
+	// On error, we always release regardless of buffer count to avoid leaks.
+	var importErr error
 	defer func() {
-		if imp.alloc.bufCount == 0 {
-			C.ArrowArrayRelease(imp.arr)
-			C.free(unsafe.Pointer(imp.arr))
+		if importErr != nil || imp.alloc.bufCount == 0 {
+			imp.alloc.forceRelease()
 		}
 	}()
 
-	return imp.doImport()
+	importErr = imp.doImport()
+	return importErr
 }
 
 // import is called recursively as needed for importing an array and its children
 // in order to generate array.Data objects
 func (imp *cimporter) doImport() error {
-	// move the array from the src object passed in to the one referenced by
-	// this importer. That way we can set up a finalizer on the created
-	// arrow.ArrayData object so we clean up our Array's memory when garbage collected.
-	defer func(arr *CArrowArray) {
-		// this should only occur in the case of an error happening
-		// during import, at which point we need to clean up the
-		// ArrowArray struct we allocated.
-		if imp.data == nil {
-			C.free(unsafe.Pointer(arr))
-		}
-	}(imp.arr)
-
 	// import any children
 	if err := imp.doImportChildren(); err != nil {
+		for _, c := range imp.children {
+			if c.data != nil {
+				c.data.Release()
+			}
+		}
 		return err
 	}
 
@@ -652,9 +654,7 @@ func (imp *cimporter) importStringLike(offsetByteWidth int64) (err error) {
 		return
 	}
 
-	var (
-		nulls, offsets, values *memory.Buffer
-	)
+	var nulls, offsets, values *memory.Buffer
 	if nulls, err = imp.importNullBitmap(0); err != nil {
 		return
 	}

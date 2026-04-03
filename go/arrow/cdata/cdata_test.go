@@ -1025,3 +1025,101 @@ func TestConfuseGoGc(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestImportStructWithInvalidSchema(t *testing.T) {
+	mem := mallocator.NewMallocator()
+	defer mem.AssertSize(t, 0)
+
+	arr := createTestStructArr()
+	defer arr.Release()
+
+	carr := createCArr(arr, mem)
+	defer freeTestMallocatorArr(carr, mem)
+
+	sc := testStruct([]string{"+s", "c", "l"}, []string{"", "a", "b"}, []int64{0, flagIsNullable, flagIsNullable})
+	defer freeMallocedSchemas(sc)
+
+	top := (*[1]*CArrowSchema)(unsafe.Pointer(sc))[0]
+	_, err := ImportCRecordBatch(carr, top)
+	assert.Error(t, err)
+}
+
+func TestImportDenseUnionWithInvalidSchema(t *testing.T) {
+	mem := mallocator.NewMallocator()
+	defer mem.AssertSize(t, 0)
+
+	unionArr := createTestDenseUnion()
+	defer unionArr.Release()
+
+	structBld := array.NewStructBuilder(memory.DefaultAllocator, arrow.StructOf(
+		arrow.Field{Name: "union_field", Type: unionArr.DataType(), Nullable: false},
+	))
+	defer structBld.Release()
+
+	unionBld := structBld.FieldBuilder(0).(*array.DenseUnionBuilder)
+	structBld.Append(true)
+	du := unionArr.(*array.DenseUnion)
+	for i := 0; i < du.Len(); i++ {
+		unionBld.Append(du.TypeCode(i))
+		if du.TypeCode(i) == 5 {
+			unionBld.Child(0).(*array.Int32Builder).Append(du.Field(0).(*array.Int32).Value(int(du.ValueOffset(i))))
+		} else {
+			unionBld.Child(1).(*array.Uint8Builder).Append(du.Field(1).(*array.Uint8).Value(int(du.ValueOffset(i))))
+		}
+	}
+
+	structArr := structBld.NewArray()
+	defer structArr.Release()
+
+	carr := createCArr(structArr, mem)
+	defer freeTestMallocatorArr(carr, mem)
+
+	// Create an invalid schema: wrong type for union field (using "i" instead of proper union schema)
+	sc := testStruct([]string{"+s", "i"}, []string{"", "union_field"}, []int64{0, flagIsNullable})
+	defer freeMallocedSchemas(sc)
+
+	top := (*[1]*CArrowSchema)(unsafe.Pointer(sc))[0]
+	_, err := ImportCRecordBatch(carr, top)
+	assert.Error(t, err)
+}
+
+func TestImportSparseUnionWithInvalidSchema(t *testing.T) {
+	mem := mallocator.NewMallocator()
+	defer mem.AssertSize(t, 0)
+
+	unionArr := createTestSparseUnion()
+	defer unionArr.Release()
+
+	structBld := array.NewStructBuilder(memory.DefaultAllocator, arrow.StructOf(
+		arrow.Field{Name: "union_field", Type: unionArr.DataType(), Nullable: false},
+	))
+	defer structBld.Release()
+
+	unionBld := structBld.FieldBuilder(0).(*array.SparseUnionBuilder)
+	structBld.Append(true)
+	su := unionArr.(*array.SparseUnion)
+	for i := 0; i < su.Len(); i++ {
+		unionBld.Append(su.TypeCode(i))
+		if su.TypeCode(i) == 5 {
+			unionBld.Child(0).(*array.Int32Builder).Append(su.Field(0).(*array.Int32).Value(i))
+			unionBld.Child(1).(*array.Uint8Builder).AppendNull()
+		} else {
+			unionBld.Child(0).(*array.Int32Builder).AppendNull()
+			unionBld.Child(1).(*array.Uint8Builder).Append(su.Field(1).(*array.Uint8).Value(i))
+		}
+	}
+
+	structArr := structBld.NewArray()
+	defer structArr.Release()
+
+	carr := createCArr(structArr, mem)
+	defer freeTestMallocatorArr(carr, mem)
+
+	// Create an invalid schema: wrong type for union field (using "u" instead of proper union schema)
+	sc := testStruct([]string{"+s", "u"}, []string{"", "union_field"}, []int64{0, flagIsNullable})
+	defer freeMallocedSchemas(sc)
+
+	top := (*[1]*CArrowSchema)(unsafe.Pointer(sc))[0]
+	_, err := ImportCRecordBatch(carr, top)
+	assert.Error(t, err)
+}
