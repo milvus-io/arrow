@@ -338,11 +338,26 @@ static void release_str_array(struct ArrowArray* array) {
     if (array->buffers[0] != NULL) {
         free((void*) array->buffers[0]);
     }
-    free((void*) array->buffers[1]);
+    if (array->buffers[1] != NULL && array->buffers[1] != (void*)0x1) {
+        free((void*) array->buffers[1]);
+    }
     if (array->buffers[2] != NULL && array->buffers[2] != (void*)0x1) {
         free((void*) array->buffers[2]);
     }
     free(array->buffers);
+    array->release = NULL;
+}
+
+static void release_list_array(struct ArrowArray* array) {
+    assert(array->n_buffers == 2);
+    if (array->buffers[0] != NULL) {
+        free((void*) array->buffers[0]);
+    }
+    free((void*) array->buffers[1]);
+    free(array->buffers);
+    ArrowArrayRelease(array->children[0]);
+    free(array->children[0]);
+    free(array->children);
     array->release = NULL;
 }
 
@@ -373,7 +388,10 @@ void export_str_array_with_nulls(int64_t nitems, struct ArrowArray* out) {
         .null_count = nitems,
         .n_buffers = 3,
         .n_children = 0,
-        .children = NULL,
+        // The C Data Interface permits arbitrary pointer values when
+        // n_children is zero. Keep a non-null sentinel here so the importer
+        // regression test exercises that contract as well.
+        .children = (struct ArrowArray**)0x1,
         .dictionary = NULL,
         // bookkeeping
         .release = &release_str_array
@@ -387,6 +405,166 @@ void export_str_array_with_nulls(int64_t nitems, struct ArrowArray* out) {
     out->buffers[1] = malloc((nitems + 1) * sizeof(int32_t));
     memset((void*)out->buffers[1], 0, (nitems + 1) * sizeof(int32_t));
     out->buffers[2] = (void*)0x1;
+}
+
+void export_str_array_with_empty_values(int64_t nitems, struct ArrowArray* out) {
+    *out = (struct ArrowArray) {
+        .length = nitems,
+        .offset = 0,
+        .null_count = 0,
+        .n_buffers = 3,
+        .n_children = 0,
+        .children = (struct ArrowArray**)0x1,
+        .dictionary = NULL,
+        .release = &release_str_array
+    };
+
+    out->buffers = (const void**)malloc(sizeof(void*) * out->n_buffers);
+    assert(out->buffers != NULL);
+    out->buffers[0] = NULL;
+    out->buffers[1] = malloc((nitems + 1) * sizeof(int32_t));
+    memset((void*)out->buffers[1], 0, (nitems + 1) * sizeof(int32_t));
+    out->buffers[2] = (void*)0x1;
+}
+
+void export_large_str_array_with_nulls(int64_t nitems, struct ArrowArray* out) {
+    *out = (struct ArrowArray) {
+        .length = nitems,
+        .offset = 0,
+        .null_count = nitems,
+        .n_buffers = 3,
+        .n_children = 0,
+        .children = (struct ArrowArray**)0x1,
+        .dictionary = NULL,
+        .release = &release_str_array
+    };
+
+    out->buffers = (const void**)malloc(sizeof(void*) * out->n_buffers);
+    assert(out->buffers != NULL);
+    int64_t bitmap_nbytes = (nitems + 7) / 8;
+    out->buffers[0] = malloc(bitmap_nbytes);
+    memset((void*)out->buffers[0], 0, bitmap_nbytes);
+    out->buffers[1] = malloc((nitems + 1) * sizeof(int64_t));
+    memset((void*)out->buffers[1], 0, (nitems + 1) * sizeof(int64_t));
+    out->buffers[2] = (void*)0x1;
+}
+
+void export_large_str_array_with_empty_values(int64_t nitems, struct ArrowArray* out) {
+    *out = (struct ArrowArray) {
+        .length = nitems,
+        .offset = 0,
+        .null_count = 0,
+        .n_buffers = 3,
+        .n_children = 0,
+        .children = (struct ArrowArray**)0x1,
+        .dictionary = NULL,
+        .release = &release_str_array
+    };
+
+    out->buffers = (const void**)malloc(sizeof(void*) * out->n_buffers);
+    assert(out->buffers != NULL);
+    out->buffers[0] = NULL;
+    out->buffers[1] = malloc((nitems + 1) * sizeof(int64_t));
+    memset((void*)out->buffers[1], 0, (nitems + 1) * sizeof(int64_t));
+    out->buffers[2] = (void*)0x1;
+}
+
+void export_list_str_array_with_null_child(int64_t nitems, struct ArrowArray* out) {
+    *out = (struct ArrowArray) {
+        .length = nitems,
+        .offset = 0,
+        .null_count = 0,
+        .n_buffers = 2,
+        .n_children = 1,
+        .dictionary = NULL,
+        .release = &release_list_array
+    };
+
+    out->buffers = (const void**)malloc(sizeof(void*) * out->n_buffers);
+    assert(out->buffers != NULL);
+    out->buffers[0] = NULL;
+    out->buffers[1] = malloc((nitems + 1) * sizeof(int32_t));
+    int32_t* offsets = (int32_t*)out->buffers[1];
+    for (int64_t i = 0; i <= nitems; ++i) {
+        offsets[i] = (int32_t)i;
+    }
+
+    out->children = malloc(sizeof(struct ArrowArray*));
+    out->children[0] = malloc(sizeof(struct ArrowArray));
+    export_str_array_with_nulls(nitems, out->children[0]);
+}
+
+void export_empty_string_view(struct ArrowArray* out) {
+    *out = (struct ArrowArray) {
+        .length = 0,
+        .offset = 0,
+        .null_count = 0,
+        .n_buffers = 3,
+        .n_children = 0,
+        .children = (struct ArrowArray**)0x1,
+        .dictionary = NULL,
+        .release = &release_str_array
+    };
+
+    out->buffers = (const void**)malloc(sizeof(void*) * out->n_buffers);
+    assert(out->buffers != NULL);
+    out->buffers[0] = NULL;
+    out->buffers[1] = (void*)0x1;
+    out->buffers[2] = (void*)0x1;
+}
+
+static int all_null_string_stream_schema(struct ArrowArrayStream* st, struct ArrowSchema* out) {
+    out->children = malloc(sizeof(struct ArrowSchema*));
+    out->n_children = 1;
+    out->children[0] = malloc(sizeof(struct ArrowSchema));
+    *out->children[0] = (struct ArrowSchema) {
+        .format = "u",
+        .name = "value",
+        .metadata = NULL,
+        .flags = ARROW_FLAG_NULLABLE,
+        .children = (struct ArrowSchema**)0x1,
+        .n_children = 0,
+        .dictionary = NULL,
+        .release = &release_nested_static,
+    };
+    out->format = "+s";
+    out->release = &release_nested_static;
+    return 0;
+}
+
+static int next_all_null_string_record(struct ArrowArrayStream* st, struct ArrowArray* out) {
+    struct streamcounter* cnter = (struct streamcounter*)(st->private_data);
+    if (cnter->n == cnter->max) {
+        ArrowArrayMarkReleased(out);
+        return 0;
+    }
+    cnter->n++;
+
+    *out = (struct ArrowArray) {
+        .offset = 0,
+        .dictionary = NULL,
+        .length = 1000,
+        .null_count = 0,
+        .buffers = (const void**)malloc(sizeof(void*)),
+        .n_children = 1,
+        .n_buffers = 1,
+        .release = &release_the_array
+    };
+    out->buffers[0] = NULL;
+    out->children = malloc(sizeof(struct ArrowArray*));
+    out->children[0] = malloc(sizeof(struct ArrowArray));
+    export_str_array_with_nulls(1000, out->children[0]);
+    return 0;
+}
+
+void setup_all_null_string_stream(struct ArrowArrayStream* out) {
+    struct streamcounter* cnt = malloc(sizeof(struct streamcounter));
+    cnt->max = 1;
+    cnt->n = 0;
+    out->get_next = &next_all_null_string_record;
+    out->get_schema = &all_null_string_stream_schema;
+    out->release = &release_stream;
+    out->private_data = cnt;
 }
 
 static int next_record(struct ArrowArrayStream* st, struct ArrowArray* out) {

@@ -26,6 +26,7 @@ package cdata
 // #include "arrow/c/helpers.h"
 //
 // void setup_array_stream_test(const int n_batches, struct ArrowArrayStream* out);
+// void setup_all_null_string_stream(struct ArrowArrayStream* out);
 // static struct ArrowArray* get_test_arr() {
 //   struct ArrowArray* array = (struct ArrowArray*)malloc(sizeof(struct ArrowArray));
 //   memset(array, 0, sizeof(*array));
@@ -47,6 +48,11 @@ package cdata
 // void export_int32_type(struct ArrowSchema* schema);
 // void export_int32_array(const int32_t*, int64_t, struct ArrowArray*);
 // void export_str_array_with_nulls(int64_t nitems, struct ArrowArray* out);
+// void export_str_array_with_empty_values(int64_t nitems, struct ArrowArray* out);
+// void export_large_str_array_with_nulls(int64_t nitems, struct ArrowArray* out);
+// void export_large_str_array_with_empty_values(int64_t nitems, struct ArrowArray* out);
+// void export_list_str_array_with_null_child(int64_t nitems, struct ArrowArray* out);
+// void export_empty_string_view(struct ArrowArray* out);
 // int test1_is_released();
 // void test_primitive(struct ArrowSchema* schema, const char* fmt);
 // void free_malloced_schemas(struct ArrowSchema**);
@@ -99,6 +105,36 @@ func releaseStream(s *CArrowArrayStream) {
 func exportStrArrayWithNulls(nitems int64) CArrowArray {
 	var arr CArrowArray
 	C.export_str_array_with_nulls(C.int64_t(nitems), &arr)
+	return arr
+}
+
+func exportStrArrayWithEmptyValues(nitems int64) CArrowArray {
+	var arr CArrowArray
+	C.export_str_array_with_empty_values(C.int64_t(nitems), &arr)
+	return arr
+}
+
+func exportLargeStrArrayWithNulls(nitems int64) CArrowArray {
+	var arr CArrowArray
+	C.export_large_str_array_with_nulls(C.int64_t(nitems), &arr)
+	return arr
+}
+
+func exportLargeStrArrayWithEmptyValues(nitems int64) CArrowArray {
+	var arr CArrowArray
+	C.export_large_str_array_with_empty_values(C.int64_t(nitems), &arr)
+	return arr
+}
+
+func exportListStrArrayWithNullChild(nitems int64) CArrowArray {
+	var arr CArrowArray
+	C.export_list_str_array_with_null_child(C.int64_t(nitems), &arr)
+	return arr
+}
+
+func exportEmptyStringView() CArrowArray {
+	var arr CArrowArray
+	C.export_empty_string_view(&arr)
 	return arr
 }
 
@@ -388,6 +424,12 @@ func createTestStreamObj() *CArrowArrayStream {
 func arrayStreamTest() *CArrowArrayStream {
 	st := C.get_test_stream()
 	C.setup_array_stream_test(2, st)
+	return st
+}
+
+func allNullStringStreamTest() *CArrowArrayStream {
+	st := C.get_test_stream()
+	C.setup_all_null_string_stream(st)
 	return st
 }
 

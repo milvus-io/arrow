@@ -712,17 +712,88 @@ func TestNestedArrays(t *testing.T) {
 }
 
 func TestStrArrayAllNulls(t *testing.T) {
-	arr := exportStrArrayWithNulls(1000)
-	carr, err := ImportCArrayWithType(&arr, arrow.BinaryTypes.String)
-	require.NoError(t, err)
-	defer carr.Release()
+	for _, tc := range []struct {
+		name   string
+		dt     arrow.DataType
+		export func(int64) CArrowArray
+	}{
+		{name: "string", dt: arrow.BinaryTypes.String, export: exportStrArrayWithNulls},
+		{name: "binary", dt: arrow.BinaryTypes.Binary, export: exportStrArrayWithNulls},
+		{name: "large_string", dt: arrow.BinaryTypes.LargeString, export: exportLargeStrArrayWithNulls},
+		{name: "large_binary", dt: arrow.BinaryTypes.LargeBinary, export: exportLargeStrArrayWithNulls},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			arr := tc.export(1000)
+			carr, err := ImportCArrayWithType(&arr, tc.dt)
+			require.NoError(t, err)
+			defer carr.Release()
 
-	buffer := carr.Data().Buffers()[2]
-	assert.NotNil(t, buffer)
-	bs := buffer.Bytes()
-	assert.Equal(t, 1000, carr.Len())
-	assert.Equal(t, 1000, carr.NullN())
-	assert.Empty(t, bs)
+			buffer := carr.Data().Buffers()[2]
+			require.NotNil(t, buffer)
+			require.Empty(t, buffer.Bytes())
+			assert.NotEqual(t, uintptr(1), uintptr(unsafe.Pointer(unsafe.SliceData(buffer.Buf()))))
+			assert.Equal(t, 1000, carr.Len())
+			assert.Equal(t, 1000, carr.NullN())
+			for i := 0; i < carr.Len(); i++ {
+				assert.True(t, carr.IsNull(i))
+			}
+		})
+	}
+}
+
+func TestStrArrayEmptyValues(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		dt     arrow.DataType
+		export func(int64) CArrowArray
+	}{
+		{name: "string", dt: arrow.BinaryTypes.String, export: exportStrArrayWithEmptyValues},
+		{name: "binary", dt: arrow.BinaryTypes.Binary, export: exportStrArrayWithEmptyValues},
+		{name: "large_string", dt: arrow.BinaryTypes.LargeString, export: exportLargeStrArrayWithEmptyValues},
+		{name: "large_binary", dt: arrow.BinaryTypes.LargeBinary, export: exportLargeStrArrayWithEmptyValues},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			arr := tc.export(1000)
+			carr, err := ImportCArrayWithType(&arr, tc.dt)
+			require.NoError(t, err)
+			defer carr.Release()
+
+			buffer := carr.Data().Buffers()[2]
+			require.NotNil(t, buffer)
+			require.Empty(t, buffer.Bytes())
+			assert.NotEqual(t, uintptr(1), uintptr(unsafe.Pointer(unsafe.SliceData(buffer.Buf()))))
+			assert.Equal(t, 1000, carr.Len())
+			assert.Zero(t, carr.NullN())
+			for i := 0; i < carr.Len(); i++ {
+				assert.Empty(t, carr.ValueStr(i))
+			}
+		})
+	}
+}
+
+func TestListStringArrayAllNullChildValues(t *testing.T) {
+	arr := exportListStrArrayWithNullChild(1000)
+	imported, err := ImportCArrayWithType(&arr, arrow.ListOf(arrow.BinaryTypes.String))
+	require.NoError(t, err)
+	defer imported.Release()
+
+	list := imported.(*array.List)
+	assert.Equal(t, 1000, list.Len())
+	values := list.ListValues()
+	assert.Equal(t, 1000, values.NullN())
+	buffer := values.Data().Buffers()[2]
+	require.NotNil(t, buffer)
+	require.Empty(t, buffer.Bytes())
+	assert.NotEqual(t, uintptr(1), uintptr(unsafe.Pointer(unsafe.SliceData(buffer.Buf()))))
+}
+
+func TestEmptyStringViewArbitraryZeroLengthPointer(t *testing.T) {
+	arr := exportEmptyStringView()
+	imported, err := ImportCArrayWithType(&arr, arrow.BinaryTypes.StringView)
+	require.NoError(t, err)
+	defer imported.Release()
+	assert.Zero(t, imported.Len())
+	assert.IsType(t, &array.StringView{}, imported)
 }
 
 func TestRecordBatch(t *testing.T) {
@@ -780,6 +851,33 @@ func TestRecordReaderStream(t *testing.T) {
 		assert.Equal(t, "bar", rec.Column(1).(*array.String).Value(1))
 		assert.Equal(t, "baz", rec.Column(1).(*array.String).Value(2))
 	}
+}
+
+func TestRecordReaderStreamAllNullStrings(t *testing.T) {
+	stream := allNullStringStreamTest()
+	defer releaseStream(stream)
+
+	rdr, err := ImportCRecordReader(stream, nil)
+	require.NoError(t, err)
+
+	rec, err := rdr.Read()
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	assert.EqualValues(t, 1000, rec.NumRows())
+	require.EqualValues(t, 1, rec.NumCols())
+	col := rec.Column(0)
+	assert.Equal(t, 1000, col.NullN())
+	for i := 0; i < col.Len(); i++ {
+		assert.True(t, col.IsNull(i))
+	}
+
+	buffer := col.Data().Buffers()[2]
+	require.NotNil(t, buffer)
+	require.Empty(t, buffer.Bytes())
+	assert.NotEqual(t, uintptr(1), uintptr(unsafe.Pointer(unsafe.SliceData(buffer.Buf()))))
+
+	_, err = rdr.Read()
+	assert.ErrorIs(t, err, io.EOF)
 }
 
 func TestExportRecordReaderStream(t *testing.T) {
