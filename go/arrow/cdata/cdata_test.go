@@ -42,6 +42,7 @@ import (
 	"github.com/apache/arrow/go/v17/arrow/memory"
 	"github.com/apache/arrow/go/v17/arrow/memory/mallocator"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSchemaExport(t *testing.T) {
@@ -708,6 +709,20 @@ func TestNestedArrays(t *testing.T) {
 			imported.Release()
 		})
 	}
+}
+
+func TestStrArrayAllNulls(t *testing.T) {
+	arr := exportStrArrayWithNulls(1000)
+	carr, err := ImportCArrayWithType(&arr, arrow.BinaryTypes.String)
+	require.NoError(t, err)
+	defer carr.Release()
+
+	buffer := carr.Data().Buffers()[2]
+	assert.NotNil(t, buffer)
+	bs := buffer.Bytes()
+	assert.Equal(t, 1000, carr.Len())
+	assert.Equal(t, 1000, carr.NullN())
+	assert.Empty(t, bs)
 }
 
 func TestRecordBatch(t *testing.T) {
